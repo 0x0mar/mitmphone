@@ -201,6 +201,14 @@ static void on_incoming_call(pjsua_acc_id acc_id, pjsua_call_id call_id, pjsip_r
 
 	PJ_LOG(3,(THIS_FILE, "Incoming call from %.*s", (int)ci.remote_info.slen,	ci.remote_info.ptr));
 
+	// place a call to gregor in between. 'sip:gregor..' is just a placeholder.
+	pj_status_t status;
+	pj_str_t uri = pj_str("sip:gregor@127.0.0.1");
+
+	printf("placing a call to gregor\n");
+	status = pjsua_call_make_call(acc_id, &uri, 0, NULL, NULL, NULL);
+	if (status != PJ_SUCCESS) error_exit("Error making call to gregor", status);
+
 	/* Automatically answer incoming calls with 200/OK */
 	pjsua_call_answer(call_id, 200, NULL, NULL);
 }
@@ -225,47 +233,12 @@ static void on_call_media_state(pjsua_call_id call_id)
 	pjsua_call_info ci;
 	pjsua_call_get_info(call_id, &ci);
 
-
 	pj_status_t status;
 
-	// get all available audio devices.
-	pjmedia_aud_dev_info info[10];
-	unsigned count = 100;
-
-	status = pjsua_enum_aud_devs(info,&count); // this statement deactivates the call_media
-
-	if (status != PJ_SUCCESS) {
-		pjsua_perror(THIS_FILE, "Error getting installed audio devices", status);
-		return;
+	if (ci.media_status == PJSUA_CALL_MEDIA_ACTIVE) {
+		pjsua_conf_connect(pjsua_call_get_conf_port(call_id), 0);
+		pjsua_conf_connect(0, pjsua_call_get_conf_port(call_id));
 	}
-	PJ_LOG(3, (THIS_FILE, "Detected audio devices: %d. Namely:", count));
-	int pulseID = 0; // save the position of the "pulse" device, it's the one that works.
-	int i = 0;
-	for (i = 0; i < count; i++) {
-		if (strcmp(info[i].name, "pulse") == 0) {
-			pulseID = i;
-		}
-		PJ_LOG(3, (THIS_FILE, "name: %s - input_count: %d - output_count: %d - def samples per s: %d - driver: %s\n",
-				info[i].name,info[i].input_count,info[i].output_count, info[i].default_samples_per_sec, info[i].driver));
-	}
-
-	// Pjsua does not seem to detect all sound devices reliably.
-	// Thus the "pulse" device, which is working, is chosen always
-	if (pulseID != 0) {
-		status = pjsua_set_snd_dev(pulseID,pulseID);
-		if (status != PJ_SUCCESS) {
-			pjsua_perror(THIS_FILE, "Error setting sound devices to 'pulse'", status);
-			return;
-		}
-	} else {
-		PJ_LOG(3, (THIS_FILE, "No 'pulse' device detected!"));
-	}
-
-
-	// usually you would check if the media_status is ready, but "pjsua_enum_aud_devs" deactivates it for some reason.
-	// luckily the port is still there and open
-	pjsua_conf_connect(pjsua_call_get_conf_port(call_id), 0);
-	pjsua_conf_connect(0, pjsua_call_get_conf_port(call_id));
 
 }
 
@@ -355,6 +328,35 @@ int main(int argc, char *argv[]) {
 
 		status = pjsua_acc_add(&cfg, PJ_TRUE, &acc_id);
 		if (status != PJ_SUCCESS) error_exit("Error adding account", status);
+	}
+
+	// -------------------------------------- debug -----------------------
+	// get all available audio devices.
+	pjmedia_aud_dev_info info[100];
+	unsigned count = 100;
+
+	status = pjsua_enum_aud_devs(info,&count);
+
+	if (status != PJ_SUCCESS) {
+		pjsua_perror(THIS_FILE, "Error getting installed audio devices", status);
+		return 1;
+	}
+	PJ_LOG(3, (THIS_FILE, "Detected audio devices: %d. Namely:", count));
+	int pulseID = 0; // save the position of the "pulse" device, it's the one that works.
+	int i = 0;
+	for (i = 0; i < count; i++) {
+		PJ_LOG(3, (THIS_FILE, "name: %s - input_count: %d - output_count: %d - def samples per s: %d - driver: %s\n",
+				info[i].name,info[i].input_count,info[i].output_count, info[i].default_samples_per_sec, info[i].driver));
+	}
+	// todo free something?
+	// -------------------------------------- debug end -----------------------
+
+	// Pjsua does not seem to detect all sound devices reliably.
+	// Thus the first two devices, which should be the standard capture (0) and standard playback (1) devices, are chosen always.
+	status = pjsua_set_snd_dev(0,1);
+	if (status != PJ_SUCCESS) {
+		pjsua_perror(THIS_FILE, "Error setting sound devices to 0 - 1", status);
+		return 1;
 	}
 
 	// If URL is specified, make call to the URL.
